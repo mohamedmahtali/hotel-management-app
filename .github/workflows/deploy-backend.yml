@@ -8,12 +8,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write     # pour pousser sur le repo GitOps
-  packages: write     # pour pousser l'image sur GHCR
+  contents: write     # push dans le repo GitOps
+  packages: write     # push d'image vers GHCR
 
 jobs:
   build-push-update:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -30,7 +31,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
         with:
           driver: docker-container
-      
+
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -61,12 +62,11 @@ jobs:
       - name: Update image in GitOps (backend)
         working-directory: gitops
         run: |
-          sudo apt-get update -y && sudo apt-get install -y jq
-          # simple sed: remplace la ligne image: ghcr.io/.../hotel-api:xxx
+          # remplace la ligne "image: ghcr.io/.../hotel-api:xxx"
           sed -i "s#\(image:\s*\)ghcr\.io/.*/hotel-api:.*#\1${{ env.IMAGE }}:${{ env.TAG }}#" prod-api.yaml
 
-          git config --global user.email "bot@github-actions"
-          git config --global user.name  "github-actions[bot]"
+          git config user.email "bot@github-actions"
+          git config user.name  "github-actions[bot]"
           git add prod-api.yaml
           git commit -m "ci(gitops): bump backend image to ${{ env.IMAGE }}:${{ env.TAG }}" || echo "No changes to commit"
           git push
