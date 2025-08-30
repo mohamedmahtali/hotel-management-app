@@ -7,20 +7,23 @@ on:
       - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write     # pour pousser sur le repo GitOps
+  packages: write     # pour pousser l'image sur GHCR
+
 jobs:
   build-push-update:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set image vars
         id: vars
         run: |
-          echo "IMAGE=ghcr.io/mohamedmahtali/hotel-api" >> $GITHUB_ENV
+          echo "IMAGE=ghcr.io/${{ github.repository_owner }}/hotel-api" >> $GITHUB_ENV
           echo "TAG=${GITHUB_SHA}" >> $GITHUB_ENV
 
       - name: Login to GHCR
@@ -38,21 +41,27 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:${{ env.TAG }}
             ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Update GitOps repo (bump backend image tag)
-        env:
-          GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+      # --- Bump GitOps manifests ---
+      - name: Checkout GitOps repo
+        uses: actions/checkout@v4
+        with:
+          repository: mohamedmahtali/hotel-gitops
+          token: ${{ secrets.GITOPS_PAT }}
+          path: gitops
+          fetch-depth: 0
+
+      - name: Update image in GitOps (backend)
+        working-directory: gitops
         run: |
-          set -e
+          sudo apt-get update -y && sudo apt-get install -y jq
+          # simple sed: remplace la ligne image: ghcr.io/.../hotel-api:xxx
+          sed -i "s#\(image:\s*\)ghcr\.io/.*/hotel-api:.*#\1${{ env.IMAGE }}:${{ env.TAG }}#" prod-api.yaml
+
           git config --global user.email "bot@github-actions"
           git config --global user.name  "github-actions[bot]"
-
-          git clone https://$GITOPS_PAT@github.com/mohamedmahtali/hotel-gitops.git
-          cd hotel-gitops
-
-          # remplace la ligne image du backend
-          sed -i 's#ghcr.io/mohamedmahtali/hotel-api:.*#ghcr.io/mohamedmahtali/hotel-api:'"${TAG}"'#g' prod-api.yaml
-
           git add prod-api.yaml
-          git commit -m "ci(backend): image -> ${TAG}"
-          git push origin main
+          git commit -m "ci(gitops): bump backend image to ${{ env.IMAGE }}:${{ env.TAG }}" || echo "No changes to commit"
+          git push

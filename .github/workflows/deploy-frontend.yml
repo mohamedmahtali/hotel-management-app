@@ -7,20 +7,23 @@ on:
       - '.github/workflows/deploy-frontend.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build-push-update:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set image vars
         id: vars
         run: |
-          echo "IMAGE=ghcr.io/mohamedmahtali/hotel-web" >> $GITHUB_ENV
+          echo "IMAGE=ghcr.io/${{ github.repository_owner }}/hotel-web" >> $GITHUB_ENV
           echo "TAG=${GITHUB_SHA}" >> $GITHUB_ENV
 
       - name: Login to GHCR
@@ -40,21 +43,25 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:${{ env.TAG }}
             ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Update GitOps repo (bump frontend image tag)
-        env:
-          GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+      # --- Bump GitOps manifests ---
+      - name: Checkout GitOps repo
+        uses: actions/checkout@v4
+        with:
+          repository: mohamedmahtali/hotel-gitops
+          token: ${{ secrets.GITOPS_PAT }}
+          path: gitops
+          fetch-depth: 0
+
+      - name: Update image in GitOps (frontend)
+        working-directory: gitops
         run: |
-          set -e
+          sed -i "s#\(image:\s*\)ghcr\.io/.*/hotel-web:.*#\1${{ env.IMAGE }}:${{ env.TAG }}#" prod-web.yaml
+
           git config --global user.email "bot@github-actions"
           git config --global user.name  "github-actions[bot]"
-
-          git clone https://$GITOPS_PAT@github.com/mohamedmahtali/hotel-gitops.git
-          cd hotel-gitops
-
-          # remplace la ligne image du frontend
-          sed -i 's#ghcr.io/mohamedmahtali/hotel-web:.*#ghcr.io/mohamedmahtali/hotel-web:'"${TAG}"'#g' prod-web.yaml
-
           git add prod-web.yaml
-          git commit -m "ci(frontend): image -> ${TAG}"
-          git push origin main
+          git commit -m "ci(gitops): bump frontend image to ${{ env.IMAGE }}:${{ env.TAG }}" || echo "No changes to commit"
+          git push
