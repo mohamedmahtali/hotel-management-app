@@ -1,0 +1,58 @@
+name: Build & Deploy (backend)
+
+on:
+  push:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+jobs:
+  build-push-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set image vars
+        id: vars
+        run: |
+          echo "IMAGE=ghcr.io/mohamedmahtali/hotel-api" >> $GITHUB_ENV
+          echo "TAG=${GITHUB_SHA}" >> $GITHUB_ENV
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build & push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.TAG }}
+            ${{ env.IMAGE }}:latest
+
+      - name: Update GitOps repo (bump backend image tag)
+        env:
+          GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+        run: |
+          set -e
+          git config --global user.email "bot@github-actions"
+          git config --global user.name  "github-actions[bot]"
+
+          git clone https://$GITOPS_PAT@github.com/mohamedmahtali/hotel-gitops.git
+          cd hotel-gitops
+
+          # remplace la ligne image du backend
+          sed -i 's#ghcr.io/mohamedmahtali/hotel-api:.*#ghcr.io/mohamedmahtali/hotel-api:'"${TAG}"'#g' prod-api.yaml
+
+          git add prod-api.yaml
+          git commit -m "ci(backend): image -> ${TAG}"
+          git push origin main
